@@ -729,26 +729,8 @@ body .cdn-sub{margin-top:clamp(.5rem,1.6vh,.9rem)!important;margin-left:auto!imp
 (function(){
   var audio=document.getElementById('wedding-melody'), button=document.getElementById('music-toggle');
   if(!audio||!button) return;
-  var srcEl=audio.querySelector('source'), dataUri=srcEl?srcEl.getAttribute('src'):'';
-  var mm=dataUri.match(/^data:([^;]+);base64,(.*)$/);
-  if(!mm) return;
-  var mime=mm[1], b64=mm[2], bytes=null;
-  function getBytes(){
-    if(!bytes){var bin=atob(b64);bytes=new Uint8Array(bin.length);for(var i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);}
-    return bytes;
-  }
-  audio.removeChild(srcEl);
   audio.loop=true; audio.volume=.6; audio.preload='auto';
-
-  var mode='blob', blobUrl=null, wantPlay=false, chosen=false;
-  var ctx=null, buf=null, node=null, gain=null, waPlaying=false;
-  // Wenn die Umgebung Audio aus blob:/data: blockiert (z. B. Vorschau-Hosting), sofort auf Web Audio wechseln
-  document.addEventListener('securitypolicyviolation',function(e){
-    var d=e.effectiveDirective||e.violatedDirective||'';
-    if(mode!=='webaudio' && /media|default/.test(d)){ mode='webaudio'; if(chosen&&wantPlay) start(); }
-  });
-
-  function playing(){return mode==='webaudio'?waPlaying:!audio.paused;}
+  var chosen=false;
   function ui(p){
     button.setAttribute('aria-pressed',p?'true':'false');
     button.setAttribute('aria-label',p?'Pause music':'Play music');
@@ -761,82 +743,26 @@ body .cdn-sub{margin-top:clamp(.5rem,1.6vh,.9rem)!important;margin-left:auto!imp
       document.body.appendChild(t);}
     t.textContent=msg;t.style.display='block';clearTimeout(t._h);t._h=setTimeout(function(){t.style.display='none';},6000);
   }
-
-  // Stufe 1: Blob-URL, Stufe 2: Data-URI direkt, Stufe 3: Web Audio
-  function useBlob(){
-    try{
-      if(blobUrl) URL.revokeObjectURL(blobUrl);
-      blobUrl=URL.createObjectURL(new Blob([getBytes()],{type:mime}));
-      audio.src=blobUrl; audio.load();
-    }catch(e){ escalate('blob-exception'); }
-  }
-  function useData(){ audio.src=dataUri; audio.load(); }
-  function escalate(why){
-    if(mode==='blob'){ mode='data'; useData(); if(wantPlay) start(); }
-    else if(mode==='data'){ mode='webaudio'; if(wantPlay) start(); }
-    else { ui(false); if(wantPlay) toast('Music could not be started.'); wantPlay=false; }
-  }
-  audio.addEventListener('error',function(){ if(mode!=='webaudio') escalate('media-error'); });
-
-  function startWebAudio(){
-    var AC=window.AudioContext||window.webkitAudioContext;
-    if(!AC){ toast('Sorry, this browser cannot play the music.'); ui(false); return; }
-    if(!ctx) ctx=new AC();
-    var go=function(){
-      try{
-        if(node){try{node.stop();}catch(e){}}
-        node=ctx.createBufferSource(); node.buffer=buf; node.loop=true;
-        gain=gain||ctx.createGain(); gain.gain.value=.6; node.connect(gain); gain.connect(ctx.destination);
-        node.start(0); waPlaying=true; ui(true);
-        if(ctx.state!=='running'&&ctx.resume) ctx.resume().then(function(){ui(true);});
-      }catch(e){ toast('Music could not be started.'); ui(false); }
-    };
-    if(ctx.resume) ctx.resume();
-    if(buf){ go(); return; }
-    var ab=getBytes().buffer.slice(0);
-    var done=function(b){buf=b;if(wantPlay)go();}, fail=function(){toast('Music could not be started.');ui(false);};
-    try{ var r=ctx.decodeAudioData(ab,done,fail); if(r&&r.then) r.then(done).catch(fail); }catch(e){fail();}
-  }
-  function stopWebAudio(){ if(node){try{node.stop();}catch(e){} node=null;} waPlaying=false; ui(false); }
-
   function start(quiet){
-    wantPlay=true;
-    if(mode==='webaudio'){ startWebAudio(); return; }
-    if(quiet!==true){
-      clearTimeout(start._t);
-      start._t=setTimeout(function(){
-        if(wantPlay && mode!=='webaudio' && audio.readyState<2){ try{audio.pause();}catch(e){} mode='webaudio'; startWebAudio(); }
-      },1800);
-    }
-    try{
-      var r=audio.play();
-      if(r&&r.then) r.then(function(){ui(true);}).catch(function(err){
-        ui(false);
-        if(quiet===true){ wantPlay=false; return; }
-        if(err&&err.name==='NotAllowedError'){ if(chosen) toast('Please turn on your device sound and tap again.'); return; }
-        escalate('play-reject');
-      });
-    }catch(e){ if(quiet===true){wantPlay=false;ui(false);} else escalate('play-exception'); }
+    var r=audio.play();
+    if(r&&r.then) r.then(function(){ui(true);}).catch(function(err){
+      ui(false);
+      if(quiet) return;
+      if(err&&err.name==='NotAllowedError') toast('Please turn on your device sound and tap again.');
+      else toast('Music could not be started.');
+    });
   }
-  function stop(){
-    wantPlay=false;
-    if(mode==='webaudio') stopWebAudio(); else audio.pause();
-  }
-
   button.addEventListener('click',function(ev){
     ev.preventDefault(); ev.stopPropagation(); chosen=true;
-    try{ var AC0=window.AudioContext||window.webkitAudioContext; if(AC0&&!ctx) ctx=new AC0(); if(ctx&&ctx.resume) ctx.resume(); }catch(e){}
-    if(playing()) stop(); else start();
+    if(audio.paused) start(false); else { audio.pause(); ui(false); }
   });
   audio.addEventListener('playing',function(){ui(true);});
-  audio.addEventListener('pause',function(){ if(mode!=='webaudio') ui(false); });
-
-  useBlob();
-  start(true);   // klappt nur, wenn der Browser Autoplay erlaubt
+  audio.addEventListener('pause',function(){ui(false);});
+  start(true);
   function first(ev){
     if(chosen||(ev.target.closest&&ev.target.closest('#music-toggle'))) return;
     ['click','touchend','keydown'].forEach(function(t){document.removeEventListener(t,first,true);});
-    if(!playing()) start();
+    if(audio.paused) start(false);
   }
   ['click','touchend','keydown'].forEach(function(t){document.addEventListener(t,first,true);});
   ui(false);
